@@ -482,289 +482,88 @@ import pickle
 import os
 from datetime import datetime
 
-def save_acedec_model_complete(model, X, feature_names, save_dir="saved_models"):
-    """
-    Save complete ACeDeC model with all necessary components
-    """
-    # Create save directory
-    os.makedirs(save_dir, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    
-    print(f"💾 Saving ACeDeC model to {save_dir}/")
-    
-    # 1. Save neural network state dict (most important)
-    if hasattr(model, 'neural_network') and model.neural_network is not None:
-        torch.save(
-            model.neural_network.state_dict(), 
-            f"{save_dir}/acedec_neural_network_{timestamp}.pth"
-        )
-        print("✅ Neural network weights saved")
-    
-    # 2. Save model parameters and metadata
-    model_metadata = {
-        'n_clusters': getattr(model, 'n_clusters', None),
-        'embedding_size': getattr(model, 'embedding_size', None),
-        'labels_': getattr(model, 'labels_', None),
-        'cluster_centers_': getattr(model, 'cluster_centers_', None),
-        'device': str(next(model.neural_network.parameters()).device),
-        'input_shape': X.shape,
-        'feature_names': feature_names,
-        'timestamp': timestamp
+import torch
+import os
+
+def save_neural_network_weights(model, save_path="acedec_nn_weights.pth"):
+    state_dict = model.neural_network.state_dict()
+    torch.save(state_dict, save_path)
+    print(f"Neural network weights saved to {save_path}")
+
+# Usage
+save_neural_network_weights(model)
+import pickle
+
+def save_model_metadata(model, feature_names, save_path="acedec_metadata.pkl"):
+    metadata = {
+        "n_clusters": model.n_clusters,
+        "embedding_size": model.embedding_size,
+        "labels_": model.labels_,
+        "cluster_centers_": model.cluster_centers_,
+        "feature_names": feature_names
     }
-    
-    with open(f"{save_dir}/acedec_metadata_{timestamp}.pkl", 'wb') as f:
-        pickle.dump(model_metadata, f)
-    print("✅ Model metadata saved")
-    
-    # 3. Save the complete model object (backup method)
-    try:
-        torch.save(model, f"{save_dir}/acedec_complete_model_{timestamp}.pth")
-        print("✅ Complete model saved as backup")
-    except Exception as e:
-        print(f"⚠️  Complete model save failed: {e}")
-    
-    # 4. Save sample data for testing
-    sample_data = {
-        'X_sample': X[:10],  # First 10 samples for testing
-        'feature_names': feature_names
-    }
-    
-    with open(f"{save_dir}/sample_data_{timestamp}.pkl", 'wb') as f:
-        pickle.dump(sample_data, f)
-    print("✅ Sample data saved")
-    
-    print(f"🎉 Model saved successfully with timestamp: {timestamp}")
-    return timestamp
+    with open(save_path, "wb") as f:
+        pickle.dump(metadata, f)
+    print(f"Model metadata saved to {save_path}")
 
-# Save your model
-timestamp = save_acedec_model_complete(model, X, feature_names)
-def save_acedec_model_enhanced(model, X, feature_names, save_dir="saved_models"):
-    """
-    Enhanced saving that stores everything needed for reliable reconstruction
-    """
-    os.makedirs(save_dir, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    
-    print(f"💾 Enhanced saving to {save_dir}/")
-    
-    # 1. Save neural network architecture and weights
-    if hasattr(model, 'neural_network') and model.neural_network is not None:
-        # Save state dict
-        torch.save(
-            model.neural_network.state_dict(),
-            f"{save_dir}/neural_network_weights_{timestamp}.pth"
-        )
-        
-        # Save model architecture info
-        architecture_info = {
-            'model_class': type(model.neural_network).__name__,
-            'model_structure': str(model.neural_network)
-        }
-        
-        with open(f"{save_dir}/architecture_{timestamp}.pkl", 'wb') as f:
-            pickle.dump(architecture_info, f)
-        
-        print("✅ Neural network saved with architecture info")
-    
-    # 2. Save complete ACeDeC model state
-    acedec_state = {
-        # Model parameters
-        'n_clusters': getattr(model, 'n_clusters', None),
-        'embedding_size': getattr(model, 'embedding_size', None),
-        'pretrain_epochs': getattr(model, 'pretrain_epochs', None),
-        'clustering_epochs': getattr(model, 'clustering_epochs', None),
-        'batch_size': getattr(model, 'batch_size', None),
-        
-        # Training results
-        'labels_': getattr(model, 'labels_', None),
-        'cluster_centers_': getattr(model, 'cluster_centers_', None),
-        
-        # Device and data info
-        'device': str(next(model.neural_network.parameters()).device),
-        'input_shape': X.shape,
-        'feature_names': feature_names,
-        
-        # Additional attributes
-        'random_state': getattr(model, 'random_state', None),
-        'timestamp': timestamp
-    }
-    
-    with open(f"{save_dir}/acedec_state_{timestamp}.pkl", 'wb') as f:
-        pickle.dump(acedec_state, f)
-    print("✅ ACeDeC state saved")
-    
-    # 3. Save training data (for model reconstruction)
-    training_data = {
-        'X': X,
-        'feature_names': feature_names
-    }
-    
-    with open(f"{save_dir}/training_data_{timestamp}.pkl", 'wb') as f:
-        pickle.dump(training_data, f)
-    print("✅ Training data saved")
-    
-    print(f"🎉 Enhanced save completed: {timestamp}")
-    return timestamp
+# Usage
+save_model_metadata(model, feature_names)
+def load_model_metadata(save_path="acedec_metadata.pkl"):
+    with open(save_path, "rb") as f:
+        metadata = pickle.load(f)
+    print("Model metadata loaded")
+    return metadata
 
-# Enhanced save
-timestamp = save_acedec_model_enhanced(model, X, feature_names)
-def load_acedec_model_enhanced(timestamp, save_dir="saved_models", device=None, retrain=True):
-    """
-    Enhanced loading that recreates the model reliably
-    """
-    print(f"📂 Enhanced loading from {save_dir}/ with timestamp {timestamp}")
-    
-    # Auto-detect device
-    if device is None:
-        device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-    print(f"🎯 Target device: {device}")
-    
-    try:
-        # 1. Load ACeDeC state
-        with open(f"{save_dir}/acedec_state_{timestamp}.pkl", 'rb') as f:
-            acedec_state = pickle.load(f)
-        print("✅ ACeDeC state loaded")
-        
-        # 2. Load training data
-        with open(f"{save_dir}/training_data_{timestamp}.pkl", 'rb') as f:
-            training_data = pickle.load(f)
-        print("✅ Training data loaded")
-        
-        # 3. Recreate the model
-        from clustpy.deep.enrc import ACeDeC
-        
-        print("🔄 Recreating ACeDeC model...")
-        recreated_model = ACeDeC(
-            n_clusters=acedec_state['n_clusters'],
-            embedding_size=acedec_state['embedding_size'],
-            pretrain_epochs=acedec_state.get('pretrain_epochs', 50),
-            clustering_epochs=acedec_state.get('clustering_epochs', 100),
-            batch_size=acedec_state.get('batch_size', 64),
-            random_state=acedec_state.get('random_state', 42),
-            device=device
-        )
-        
-        if retrain:
-            # 4. Retrain the model (this recreates the neural network architecture)
-            print("🔄 Retraining model to recreate architecture...")
-            recreated_model.fit(training_data['X'])
-            print("✅ Model retrained")
-            
-            # 5. Load the saved weights
-            try:
-                saved_weights = torch.load(
-                    f"{save_dir}/neural_network_weights_{timestamp}.pth",
-                    map_location=device
-                )
-                recreated_model.neural_network.load_state_dict(saved_weights)
-                print("✅ Saved weights loaded into retrained model")
-            except Exception as e:
-                print(f"⚠️  Weight loading failed: {e}")
-                print("   Using retrained weights instead")
-        
-        # 6. Restore other attributes
-        if acedec_state['labels_'] is not None:
-            recreated_model.labels_ = acedec_state['labels_']
-        if acedec_state['cluster_centers_'] is not None:
-            recreated_model.cluster_centers_ = acedec_state['cluster_centers_']
-        
-        print("🎉 Model successfully recreated!")
-        return recreated_model, acedec_state, training_data
-        
-    except Exception as e:
-        print(f"❌ Enhanced loading failed: {e}")
-        return None, None, None
+# Usage
+metadata = load_model_metadata()
+from clustpy.deep.enrc import ACeDeC
+import torch
 
-# Enhanced load
-loaded_model, loaded_state, loaded_data = load_acedec_model_enhanced(timestamp, retrain=True)
-def test_loaded_model(loaded_model, original_X, feature_names):
-    """
-    Test that the loaded model works correctly
-    """
-    print("🧪 Testing loaded model...")
-    
-    if loaded_model is None:
-        print("❌ No model to test")
-        return False
-    
-    try:
-        # Test 1: Check model attributes
-        print("1. Checking model attributes...")
-        required_attrs = ['labels_', 'cluster_centers_', 'neural_network']
-        for attr in required_attrs:
-            if hasattr(loaded_model, attr) and getattr(loaded_model, attr) is not None:
-                print(f"   ✅ {attr}: Available")
-            else:
-                print(f"   ⚠️  {attr}: Missing or None")
-        
-        # Test 2: Test neural network forward pass
-        print("2. Testing neural network...")
-        loaded_model.neural_network.eval()
-        with torch.no_grad():
-            # Get device
-            device = next(loaded_model.neural_network.parameters()).device
-            test_input = torch.FloatTensor(original_X[:5]).to(device)
-            output = loaded_model.neural_network(test_input)
-            print(f"   ✅ Forward pass successful: {test_input.shape} → {output.shape}")
-        
-        # Test 3: Test reconstruction loss calculation
-        print("3. Testing reconstruction loss...")
-        reconstruction_results = calculate_reconstruction_loss_gpu(loaded_model, original_X[:100])
-        print(f"   ✅ Reconstruction loss: {reconstruction_results['total_loss']:.6f}")
-        
-        # Test 4: Test SHAP analyzer compatibility
-        print("4. Testing SHAP analyzer compatibility...")
-        analyzer_test = ACeDeCShapAnalyzerGPU_Fixed(loaded_model, feature_names)
-        print("   ✅ SHAP analyzer initialized successfully")
-        
-        print("🎉 All tests passed! Model loaded successfully.")
-        return True
-        
-    except Exception as e:
-        print(f"❌ Testing failed: {e}")
-        return False
+def recreate_acedec_model(metadata, device="cuda:0"):
+    model = ACeDeC(
+        n_clusters=metadata["n_clusters"],
+        embedding_size=metadata["embedding_size"],
+        device=device
+    )
+    # Dummy fit to initialize architecture (with minimal data)
+    import numpy as np
+    dummy_X = np.zeros((2, len(metadata["feature_names"])), dtype=np.float32)
+    model.fit(dummy_X)
+    print("Model architecture recreated")
+    return model
 
-# Test your loaded model
-if loaded_model is not None:
-    test_success = test_loaded_model(loaded_model, X, feature_names)
-else:
-    print("❌ No model loaded to test")
-# Save your trained model
-print("Saving your ACeDeC model...")
-timestamp = save_acedec_model_enhanced(model, X, feature_names)
-print(f"Model saved with timestamp: {timestamp}")
-# In a new session or script, load your model
-print("Loading your saved ACeDeC model...")
+# Usage
+model_loaded = recreate_acedec_model(metadata)
+def load_neural_network_weights(model, weights_path="acedec_nn_weights.pth", device="cuda:0"):
+    state_dict = torch.load(weights_path, map_location=device)
+    model.neural_network.load_state_dict(state_dict)
+    model.neural_network.to(device)
+    print("Neural network weights loaded into model")
 
-# Option 1: Load with retraining (most reliable)
-loaded_model, loaded_state, loaded_data = load_acedec_model_enhanced(
-    timestamp, 
-    retrain=True,
-    device=torch.device('cuda:0')  # Specify your target device
-)
+# Usage
+load_neural_network_weights(model_loaded)
+model_loaded.labels_ = metadata["labels_"]
+model_loaded.cluster_centers_ = metadata["cluster_centers_"]
+def validate_weights(model):
+    state_dict = model.neural_network.state_dict()
+    print(f"Total tensors in state_dict: {len(state_dict)}")
+    for name, tensor in state_dict.items():
+        print(f"{name}: shape {tuple(tensor.shape)}, dtype {tensor.dtype}, device {tensor.device}")
+    # Additional checks
+    total_params = sum(p.numel() for p in state_dict.values())
+    print(f"Total parameters: {total_params}")
+    return state_dict
 
-# Option 2: Load without retraining (faster but less reliable)
-# loaded_model, loaded_state, loaded_data = load_acedec_model_enhanced(
-#     timestamp, 
-#     retrain=False,
-#     device=torch.device('cuda:0')
-# )
+# Usage
+validate_weights(model_loaded)
+import torch
+def test_forward_pass(model, feature_names):
+    device = next(model.neural_network.parameters()).device
+    test_input = torch.zeros((1, len(feature_names)), dtype=torch.float32).to(device)
+    model.neural_network.eval()
+    with torch.no_grad():
+        output = model.neural_network(test_input)
+    print(f"Forward pass successful: input shape {test_input.shape} → output shape {output.shape}")
 
-# Test the loaded model
-if loaded_model is not None:
-    test_success = test_loaded_model(loaded_model, loaded_data['X'], loaded_data['feature_names'])
-    
-    if test_success:
-        print("🎉 Model ready for analysis!")
-        
-        # Continue with your analysis
-        analyzer_gpu = ACeDeCShapAnalyzerGPU_Fixed(loaded_model, loaded_data['feature_names'])
-        
-        # Run reconstruction loss analysis
-        reconstruction_results = calculate_reconstruction_loss_gpu(loaded_model, loaded_data['X'])
-        
-        # Run SHAP analysis
-        shap_values, explainer = analyzer_gpu.calculate_shap_values_numpy_fixed(
-            loaded_data['X'], background_size=20, sample_size=5
-        )
-
+# Usage
+test_forward_pass(model_loaded, metadata["feature_names"])
