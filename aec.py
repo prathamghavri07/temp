@@ -30,3 +30,25 @@ explainer = shap.KernelExplainer(reconstruction_error, background_np, feature_na
 
 # When calling shap_values, also use numpy arrays
 shap_values = explainer.shap_values(X_train_np[:200])
+
+
+import numpy as np
+import pandas as pd
+
+# Assume shap_values is a NumPy array of shape (num_samples, num_features)
+# and feature_names is a list of feature names
+
+# Calculate mean absolute SHAP value for each feature
+mean_abs_shap = np.abs(shap_values).mean(axis=0)
+
+# Create a DataFrame for sorting
+shap_df = pd.DataFrame({
+    'feature': feature_names,
+    'mean_abs_shap': mean_abs_shap
+})
+
+# Sort features from most to least important
+shap_df_sorted = shap_df.sort_values('mean_abs_shap', ascending=False).reset_index(drop=True)
+
+# Display the full sorted list
+print(shap_df_sorted)
