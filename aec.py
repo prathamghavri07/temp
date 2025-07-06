@@ -106,38 +106,42 @@ shap_df = pd.DataFrame({
 # Display top features
 print(shap_df.head(20))  # Top 20 features by SHAP value
 
+import torch
 
+# Assume X_train is a torch.Tensor on GPU, shape [n_samples, n_features]
+# autoencoder is a PyTorch model on GPU
+# feature_names is a list of feature names
 
-import numpy as np
-import pandas as pd
-from sklearn.utils import shuffle
-
-# Set background sample size
 background_size = 1000
-X_bg = shuffle(X_train, random_state=42)[:background_size]
+device = X_train.device  # e.g., torch.device('cuda')
+
+# Randomly sample background
+idx = torch.randperm(X_train.size(0))[:background_size]
+X_bg = X_train[idx].clone()
 
 # Compute baseline reconstruction error
-recon = autoencoder.predict(X_bg)
-baseline_error = np.mean(np.square(X_bg - recon), axis=1)
-baseline_score = np.mean(baseline_error)
+with torch.no_grad():
+    recon = autoencoder(X_bg)
+    baseline_error = torch.mean((X_bg - recon) ** 2, dim=1)
+    baseline_score = baseline_error.mean().item()
 
 importances = []
 for i, col in enumerate(feature_names):
-    X_perm = X_bg.copy()
+    X_perm = X_bg.clone()
     # Permute the column
-    if isinstance(X_perm, pd.DataFrame):
-        X_perm[col] = np.random.permutation(X_perm[col].values)
-    else:
-        X_perm[:, i] = np.random.permutation(X_perm[:, i])
-    recon_perm = autoencoder.predict(X_perm)
-    perm_error = np.mean(np.square(X_bg - recon_perm), axis=1)
-    perm_score = np.mean(perm_error)
+    perm = torch.randperm(X_perm.size(0), device=device)
+    X_perm[:, i] = X_perm[perm, i]
+    with torch.no_grad():
+        recon_perm = autoencoder(X_perm)
+        perm_error = torch.mean((X_bg - recon_perm) ** 2, dim=1)
+        perm_score = perm_error.mean().item()
     importances.append(perm_score - baseline_score)
 
-# Create a DataFrame of importances
+# Convert results to CPU for display
+importances = torch.tensor(importances).cpu().numpy()
+import pandas as pd
 importance_df = pd.DataFrame({'feature': feature_names, 'importance': importances})
 importance_df = importance_df.sort_values('importance', ascending=False)
-
-# Show top 10 features
 print(importance_df.head(10))
+
 
