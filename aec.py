@@ -17,3 +17,16 @@ explainer = shap.KernelExplainer(reconstruction_error, background, feature_names
 shap_values = explainer.shap_values(X_train[:200])
 # Summary plot for feature importance
 shap.summary_plot(shap_values, X_train[:200], feature_names=feature_names)
+
+
+import numpy as np
+
+# If your data is a torch tensor, convert it to numpy
+background_np = background.cpu().numpy() if hasattr(background, 'cpu') else np.array(background)
+X_train_np = X_train.cpu().numpy() if hasattr(X_train, 'cpu') else np.array(X_train)
+
+# Now use the numpy arrays in KernelExplainer
+explainer = shap.KernelExplainer(reconstruction_error, background_np, feature_names=feature_names)
+
+# When calling shap_values, also use numpy arrays
+shap_values = explainer.shap_values(X_train_np[:200])
