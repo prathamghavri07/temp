@@ -1,3 +1,353 @@
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader, TensorDataset
+import numpy as np
+import pandas as pd
+import shap
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+import matplotlib.pyplot as plt
+import warnings
+warnings.filterwarnings('ignore')
+
+class AutoEncoder(nn.Module):
+    """
+    GPU-optimized Autoencoder for high-dimensional one-hot encoded data
+    """
+    def __init__(self, input_dim, encoding_dims=[512, 256, 128, 64]):
+        super(AutoEncoder, self).__init__()
+        
+        # Encoder layers
+        encoder_layers = []
+        prev_dim = input_dim
+        
+        for dim in encoding_dims:
+            encoder_layers.extend([
+                nn.Linear(prev_dim, dim),
+                nn.BatchNorm1d(dim),
+                nn.ReLU(),
+                nn.Dropout(0.2)
+            ])
+            prev_dim = dim
+        
+        self.encoder = nn.Sequential(*encoder_layers)
+        
+        # Decoder layers (reverse of encoder)
+        decoder_layers = []
+        encoding_dims_reversed = list(reversed(encoding_dims[:-1])) + [input_dim]
+        
+        for dim in encoding_dims_reversed:
+            decoder_layers.extend([
+                nn.Linear(prev_dim, dim),
+                nn.BatchNorm1d(dim) if dim != input_dim else nn.Identity(),
+                nn.ReLU() if dim != input_dim else nn.Sigmoid(),
+                nn.Dropout(0.2) if dim != input_dim else nn.Identity()
+            ])
+            prev_dim = dim
+        
+        self.decoder = nn.Sequential(*decoder_layers)
+        
+        # Store latent dimension
+        self.latent_dim = encoding_dims[-1]
+    
+    def encode(self, x):
+        return self.encoder(x)
+    
+    def decode(self, z):
+        return self.decoder(z)
+    
+    def forward(self, x):
+        z = self.encode(x)
+        return self.decode(z)
+
+class AutoEncoderTrainer:
+    """
+    GPU-optimized trainer for the autoencoder
+    """
+    def __init__(self, model, device='cuda'):
+        self.model = model.to(device)
+        self.device = device
+        self.history = {'train_loss': [], 'val_loss': []}
+    
+    def train(self, train_loader, val_loader, epochs=100, lr=0.001):
+        """
+        Train the autoencoder
+        """
+        criterion = nn.MSELoss()
+        optimizer = optim.Adam(self.model.parameters(), lr=lr, weight_decay=1e-5)
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=10, factor=0.5)
+        
+        best_val_loss = float('inf')
+        patience_counter = 0
+        
+        for epoch in range(epochs):
+            # Training phase
+            self.model.train()
+            train_loss = 0.0
+            
+            for batch_data, _ in train_loader:
+                batch_data = batch_data.to(self.device)
+                
+                optimizer.zero_grad()
+                reconstructed = self.model(batch_data)
+                loss = criterion(reconstructed, batch_data)
+                loss.backward()
+                optimizer.step()
+                
+                train_loss += loss.item()
+            
+            # Validation phase
+            self.model.eval()
+            val_loss = 0.0
+            
+            with torch.no_grad():
+                for batch_data, _ in val_loader:
+                    batch_data = batch_data.to(self.device)
+                    reconstructed = self.model(batch_data)
+                    loss = criterion(reconstructed, batch_data)
+                    val_loss += loss.item()
+            
+            train_loss /= len(train_loader)
+            val_loss /= len(val_loader)
+            
+            self.history['train_loss'].append(train_loss)
+            self.history['val_loss'].append(val_loss)
+            
+            scheduler.step(val_loss)
+            
+            # Early stopping
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                patience_counter = 0
+                # Save best model
+                torch.save(self.model.state_dict(), 'best_autoencoder.pth')
+            else:
+                patience_counter += 1
+                if patience_counter >= 20:
+                    print(f"Early stopping at epoch {epoch}")
+                    break
+            
+            if epoch % 10 == 0:
+                print(f'Epoch [{epoch}/{epochs}], Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}')
+        
+        # Load best model
+        self.model.load_state_dict(torch.load('best_autoencoder.pth'))
+        return self.history
+
+def calculate_reconstruction_error(model, data_loader, device='cuda'):
+    """
+    Calculate reconstruction error for each sample
+    """
+    model.eval()
+    reconstruction_errors = []
+    
+    with torch.no_grad():
+        for batch_data, _ in data_loader:
+            batch_data = batch_data.to(device)
+            reconstructed = model(batch_data)
+            
+            # Calculate MSE for each sample
+            mse = torch.mean((batch_data - reconstructed) ** 2, dim=1)
+            reconstruction_errors.extend(mse.cpu().numpy())
+    
+    return np.array(reconstruction_errors)
+
+class SHAPAnalyzer:
+    """
+    SHAP analysis for autoencoder reconstruction error
+    """
+    def __init__(self, model, background_data, device='cuda'):
+        self.model = model.to(device)
+        self.device = device
+        self.background_data = background_data
+        
+        # Create wrapper function for SHAP
+        def model_wrapper(x):
+            if isinstance(x, np.ndarray):
+                x = torch.FloatTensor(x).to(device)
+            
+            self.model.eval()
+            with torch.no_grad():
+                reconstructed = self.model(x)
+                # Return reconstruction error
+                mse = torch.mean((x - reconstructed) ** 2, dim=1)
+                return mse.cpu().numpy()
+        
+        self.model_wrapper = model_wrapper
+        
+        # Initialize SHAP explainer
+        if background_data.shape[0] > 100:
+            # Use subset for efficiency
+            bg_subset = background_data[:100]
+        else:
+            bg_subset = background_data
+            
+        self.explainer = shap.Explainer(self.model_wrapper, bg_subset)
+    
+    def get_shap_values(self, data, max_samples=500):
+        """
+        Calculate SHAP values for reconstruction error
+        """
+        if data.shape[0] > max_samples:
+            # Sample for efficiency
+            indices = np.random.choice(data.shape[0], max_samples, replace=False)
+            sample_data = data[indices]
+        else:
+            sample_data = data
+        
+        print("Calculating SHAP values...")
+        shap_values = self.explainer(sample_data)
+        return shap_values
+    
+    def find_top_contributing_features(self, shap_values, feature_names, top_k=20):
+        """
+        Find features contributing most to reconstruction error
+        """
+        # Get mean absolute SHAP values for each feature
+        mean_shap = np.mean(np.abs(shap_values.values), axis=0)
+        
+        # Get top k features
+        top_indices = np.argsort(mean_shap)[-top_k:][::-1]
+        
+        results = []
+        for i, idx in enumerate(top_indices):
+            results.append({
+                'rank': i + 1,
+                'feature_name': feature_names[idx] if feature_names is not None else f'feature_{idx}',
+                'feature_index': idx,
+                'mean_abs_shap': mean_shap[idx]
+            })
+        
+        return results
+    
+    def plot_feature_importance(self, shap_values, feature_names=None, top_k=20):
+        """
+        Plot feature importance based on SHAP values
+        """
+        top_features = self.find_top_contributing_features(shap_values, feature_names, top_k)
+        
+        features = [f['feature_name'] for f in top_features]
+        values = [f['mean_abs_shap'] for f in top_features]
+        
+        plt.figure(figsize=(12, 8))
+        plt.barh(range(len(features)), values)
+        plt.yticks(range(len(features)), features)
+        plt.xlabel('Mean Absolute SHAP Value')
+        plt.title('Top Features Contributing to Reconstruction Error')
+        plt.gca().invert_yaxis()
+        plt.tight_layout()
+        plt.show()
+        
+        return top_features
+
+def prepare_data(df, test_size=0.2, batch_size=64):
+    """
+    Prepare data for training
+    """
+    # Convert to numpy if pandas DataFrame
+    if isinstance(df, pd.DataFrame):
+        data = df.values.astype(np.float32)
+        feature_names = df.columns.tolist()
+    else:
+        data = df.astype(np.float32)
+        feature_names = [f'flag{i+1}' for i in range(data.shape[1])]
+    
+    # Split data
+    X_train, X_test = train_test_split(data, test_size=test_size, random_state=42)
+    
+    # Create datasets
+    train_dataset = TensorDataset(torch.FloatTensor(X_train), torch.FloatTensor(X_train))
+    test_dataset = TensorDataset(torch.FloatTensor(X_test), torch.FloatTensor(X_test))
+    
+    # Create data loaders
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
+    
+    return train_loader, test_loader, X_train, X_test, feature_names
+
+def main_pipeline(df):
+    """
+    Main pipeline for autoencoder training and SHAP analysis
+    """
+    # Check GPU availability
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Using device: {device}")
+    
+    # Prepare data
+    train_loader, test_loader, X_train, X_test, feature_names = prepare_data(df)
+    
+    # Initialize model
+    input_dim = df.shape[1]
+    model = AutoEncoder(input_dim)
+    
+    # Train model
+    trainer = AutoEncoderTrainer(model, device)
+    history = trainer.train(train_loader, test_loader, epochs=100)
+    
+    # Calculate reconstruction errors
+    test_errors = calculate_reconstruction_error(trainer.model, test_loader, device)
+    
+    # SHAP Analysis
+    shap_analyzer = SHAPAnalyzer(trainer.model, X_train, device)
+    shap_values = shap_analyzer.get_shap_values(X_test)
+    
+    # Find top contributing features
+    top_features = shap_analyzer.find_top_contributing_features(
+        shap_values, feature_names, top_k=20
+    )
+    
+    # Plot results
+    shap_analyzer.plot_feature_importance(shap_values, feature_names, top_k=20)
+    
+    # Plot training history
+    plt.figure(figsize=(12, 4))
+    plt.subplot(1, 2, 1)
+    plt.plot(history['train_loss'], label='Train Loss')
+    plt.plot(history['val_loss'], label='Validation Loss')
+    plt.title('Training History')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend()
+    
+    plt.subplot(1, 2, 2)
+    plt.hist(test_errors, bins=50, alpha=0.7)
+    plt.title('Reconstruction Error Distribution')
+    plt.xlabel('Reconstruction Error')
+    plt.ylabel('Frequency')
+    
+    plt.tight_layout()
+    plt.show()
+    
+    return {
+        'model': trainer.model,
+        'top_features': top_features,
+        'reconstruction_errors': test_errors,
+        'shap_values': shap_values,
+        'training_history': history
+    }
+
+# Example usage:
+if __name__ == "__main__":
+    # Create sample data (replace with your actual data)
+    # df = pd.read_csv('your_data.csv')  # Load your data
+    
+    # Create sample data for demonstration
+    np.random.seed(42)
+    sample_data = np.random.randint(0, 2, size=(10000, 1000)).astype(np.float32)
+    df = pd.DataFrame(sample_data, columns=[f'flag{i+1}' for i in range(1000)])
+    
+    # Run pipeline
+    results = main_pipeline(df)
+    
+    # Print top contributing features
+    print("\nTop 10 features contributing to reconstruction error:")
+    for feature in results['top_features'][:10]:
+        print(f"{feature['rank']}. {feature['feature_name']}: {feature['mean_abs_shap']:.6f}")
+
+
+
+
 """
 ACeDeC Model SHAP Analysis
 ==========================
