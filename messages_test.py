@@ -1,3 +1,60 @@
+def get_shap_values(self, data, max_samples=100):  # Reduced default sample size
+    # ... sampling code ...
+    if self.explainer_type in ['deep', 'gradient']:
+        sample_tensor = torch.FloatTensor(sample_data).to(self.device)
+        shap_values = self.explainer.shap_values(sample_tensor)
+        # Handle different return formats
+    else:
+        shap_values = self.explainer(sample_data)
+
+def _initialize_explainer(self, background_data):
+        """Initialize the appropriate SHAP explainer"""
+        if self.explainer_type == 'deep':
+            # Use DeepExplainer for neural networks
+            if background_data.shape[0] > 50:
+                bg_subset = background_data[:50]  # Smaller subset for DeepExplainer
+            else:
+                bg_subset = background_data
+            
+            bg_tensor = torch.FloatTensor(bg_subset).to(self.device)
+            self.explainer = shap.DeepExplainer(self.model, bg_tensor)
+            
+        elif self.explainer_type == 'kernel':
+            # Use KernelExplainer with smaller background
+            if background_data.shape[0] > 25:
+                bg_subset = background_data[:25]
+            else:
+                bg_subset = background_data
+            
+            self.explainer = shap.KernelExplainer(self.model_wrapper, bg_subset)
+            
+        elif self.explainer_type == 'permutation':
+            # Use PermutationExplainer with sufficient max_evals
+            if background_data.shape[0] > 100:
+                bg_subset = background_data[:100]
+            else:
+                bg_subset = background_data
+            
+            num_features = background_data.shape[1]
+            max_evals = max(2 * num_features + 1, 5000)  # Ensure sufficient evaluations
+            
+            self.explainer = shap.PermutationExplainer(
+                self.model_wrapper, 
+                bg_subset, 
+                max_evals=max_evals
+            )
+        
+        elif self.explainer_type == 'gradient':
+            # Use GradientExplainer
+            if background_data.shape[0] > 50:
+                bg_subset = background_data[:50]
+            else:
+                bg_subset = background_data
+            
+            bg_tensor = torch.FloatTensor(bg_subset).to(self.device)
+            self.explainer = shap.GradientExplainer(self.model, bg_tensor)
+
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
