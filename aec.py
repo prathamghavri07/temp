@@ -52,3 +52,57 @@ shap_df_sorted = shap_df.sort_values('mean_abs_shap', ascending=False).reset_ind
 
 # Display the full sorted list
 print(shap_df_sorted)
+
+
+
+
+
+
+import shap
+import torch
+import numpy as np
+import pandas as pd
+
+# Assume you have:
+# - model: your trained autoencoder (on GPU)
+# - X_train: your training data as a NumPy array or torch.Tensor (shape: [10000, 900])
+# - feature_names: list of 900 feature names
+
+# Ensure data is a torch tensor and on the correct device
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+X_train_tensor = torch.tensor(X_train, dtype=torch.float32).to(device)
+
+# Select background dataset (100 random samples)
+background_size = 100
+background_idx = np.random.choice(X_train.shape[0], background_size, replace=False)
+background = X_train_tensor[background_idx]
+
+# Define a function that outputs reconstruction error for each feature
+def reconstruction_error(inputs):
+    with torch.no_grad():
+        outputs = model(inputs)
+        # Per-feature squared error
+        errors = (inputs - outputs) ** 2
+    return errors.cpu().numpy()
+
+# Use DeepExplainer (GPU-accelerated if model is on GPU)
+explainer = shap.DeepExplainer(model, background)
+
+# Choose a batch of samples to explain (e.g., first 100)
+to_explain = X_train_tensor[:100]
+
+# Compute SHAP values for the reconstruction error
+shap_values = explainer.shap_values(to_explain)
+
+# Aggregate SHAP values across samples (mean absolute value for each feature)
+shap_importance = np.abs(shap_values).mean(axis=(0, 1))
+
+# Create a DataFrame for sorting and display
+shap_df = pd.DataFrame({
+    'feature': feature_names,
+    'shap_value': shap_importance
+}).sort_values('shap_value', ascending=False)
+
+# Display top features
+print(shap_df.head(20))  # Top 20 features by SHAP value
+
