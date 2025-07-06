@@ -106,3 +106,38 @@ shap_df = pd.DataFrame({
 # Display top features
 print(shap_df.head(20))  # Top 20 features by SHAP value
 
+
+
+import numpy as np
+import pandas as pd
+from sklearn.utils import shuffle
+
+# Set background sample size
+background_size = 1000
+X_bg = shuffle(X_train, random_state=42)[:background_size]
+
+# Compute baseline reconstruction error
+recon = autoencoder.predict(X_bg)
+baseline_error = np.mean(np.square(X_bg - recon), axis=1)
+baseline_score = np.mean(baseline_error)
+
+importances = []
+for i, col in enumerate(feature_names):
+    X_perm = X_bg.copy()
+    # Permute the column
+    if isinstance(X_perm, pd.DataFrame):
+        X_perm[col] = np.random.permutation(X_perm[col].values)
+    else:
+        X_perm[:, i] = np.random.permutation(X_perm[:, i])
+    recon_perm = autoencoder.predict(X_perm)
+    perm_error = np.mean(np.square(X_bg - recon_perm), axis=1)
+    perm_score = np.mean(perm_error)
+    importances.append(perm_score - baseline_score)
+
+# Create a DataFrame of importances
+importance_df = pd.DataFrame({'feature': feature_names, 'importance': importances})
+importance_df = importance_df.sort_values('importance', ascending=False)
+
+# Show top 10 features
+print(importance_df.head(10))
+
